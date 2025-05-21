@@ -1,6 +1,6 @@
 # Use an official Airflow image as a base
-ARG AIRFLOW_VERSION=2.7.3
-FROM apache/airflow:${AIRFLOW_VERSION}-python3.9
+ARG AIRFLOW_VERSION=2.10.0
+FROM apache/airflow:${AIRFLOW_VERSION}-python3.11
 
 USER root
 
