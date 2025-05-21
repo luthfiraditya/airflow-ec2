@@ -1,0 +1,51 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+env/
+.venv/
+*.log
+*.sqlite3
+airflow-webserver.pid
+airflow-scheduler.pid
+airflow.db # Default SQLite DB, not used in this setup
+
+# Docker
+docker-compose.override.yml
+
+# Logs and data
+logs/*
+!logs/.gitkeep # Keep the logs directory, but ignore its contents
+data/
+postgres-db-volume/
+redis-data-volume/
+
+# IDE / OS specific
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~

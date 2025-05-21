@@ -1,0 +1,25 @@
+# Base Airflow and providers (match AIRFLOW_VERSION in .env and Dockerfile ARG)
+apache-airflow==2.7.3
+apache-airflow-providers-postgres==5.7.0
+apache-airflow-providers-redis==3.4.0
+apache-airflow-providers-celery==3.4.0
+apache-airflow-providers-amazon==8.13.0 # For S3, SSM, etc.
+apache-airflow-providers-email==4.1.0
+
+# Database driver
+psycopg2-binary>=2.8 # For PostgreSQL
+
+# Celery related
+celery>=5.3.0,<6.0.0
+redis>=4.2.0,<5.0.0 # Python client for Redis
+
+# For Fernet key generation (can be installed locally too)
+cryptography>=3.4
+
+# For development and testing (install locally or in a dev container)
+# pytest>=7.0
+# pytest-cov
+# pre-commit
+# black
+# flake8
+# isort

@@ -1,0 +1,11 @@
+FROM nginx:1.25-alpine
+
+# Remove default Nginx configuration
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copy custom Nginx configuration template
+COPY default.conf.template /etc/nginx/templates/default.conf.template
+
+# Nginx will use `envsubst` to substitute environment variables in the template
+# The entrypoint script in the official Nginx image handles this.
+# CMD ["nginx", "-g", "daemon off;"]

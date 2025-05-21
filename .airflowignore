@@ -1,0 +1,39 @@
+# Ignore files and directories not containing DAGs
+
+# Version control
+.git/
+.github/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Test files
+tests/
+**/test_*.py
+*test.py
+
+# Configuration files
+*.cfg
+*.ini
+*.yaml
+*.yml
+*.json
+*.toml
+*.md
+*.txt
+Dockerfile*
+docker-compose*.yml
+Makefile
+
+# Scripts and plugins (Airflow handles plugins separately)
+scripts/
+# plugins/ # Usually, you want Airflow to load plugins, but if you have non-plugin Python files here, ignore them specifically.
+
+# Node.js
+node_modules/
+
+# Other
+.*
+!/.airflowignore # Don't ignore this file itself

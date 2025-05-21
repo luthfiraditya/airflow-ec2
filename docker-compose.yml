@@ -1,0 +1,195 @@
+version: '3.8'
+
+x-airflow-common: &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-airflow-ec2-setup:latest}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      AIRFLOW_VERSION: ${AIRFLOW_VERSION:-2.7.3}
+  env_file:
+    - .env
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+    AIRFLOW__CELERY__BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__CORE__ENABLE_XCOM_PICKLING: 'true'
+    # Email configuration (update in .env)
+    AIRFLOW__SMTP__SMTP_HOST: ${SMTP_HOST}
+    AIRFLOW__SMTP__SMTP_PORT: ${SMTP_PORT}
+    AIRFLOW__SMTP__SMTP_USER: ${SMTP_USER}
+    AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD}
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: ${SMTP_MAIL_FROM}
+    AIRFLOW__SMTP__SMTP_STARTTLS: ${SMTP_STARTTLS:-True}
+    AIRFLOW__SMTP__SMTP_SSL: ${SMTP_SSL:-False}
+    # For AWS SSM Parameter Store (requires awscli and IAM role on EC2)
+    # AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./config/airflow.cfg:/opt/airflow/airflow.cfg # Mount custom airflow.cfg
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:13
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT_HOST:-5432}:5432" # Expose if needed for direct access, otherwise keep internal
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:6.2-alpine
+    env_file:
+      - .env
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    volumes:
+      - redis-data-volume:/data
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "${AIRFLOW_WEBSERVER_HOST_PORT:-8080}:8080" # Port for Nginx to proxy to
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common.depends_on # Inherit common depends_on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common.depends_on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-worker:
+    <<: *airflow-common
+    command: celery worker
+    healthcheck:
+      test: ["CMD-SHELL", 'celery --app airflow.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common.depends_on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common.depends_on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    # The init_airflow.sh script will run db init and create user
+    command:
+      - -c
+      - |
+        set -e
+        # Check if AIRFLOW_UID is set and use it, otherwise default to current user
+        if [ -n "$${AIRFLOW_UID}" ]; then
+          usermod -u "$${AIRFLOW_UID}" airflow || true # Allow failure if UID is already in use
+        fi
+        # Run the initialization script
+        exec /opt/airflow/scripts/init_airflow.sh
+    volumes:
+      # Mount scripts directory to access init_airflow.sh
+      - ./scripts:/opt/airflow/scripts
+      # Mount dags, logs, plugins to ensure correct permissions if AIRFLOW_UID is used
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    user: "0:0" # Run as root to perform usermod and chown
+    environment:
+      _AIRFLOW_DB_UPGRADE: 'true' # Ensures db init/upgrade runs
+      _AIRFLOW_WWW_USER_CREATE: 'false' # We handle user creation in init_airflow.sh
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      _AIRFLOW_WWW_USER_EMAIL: ${AIRFLOW_ADMIN_EMAIL}
+      _AIRFLOW_WWW_USER_FIRSTNAME: ${AIRFLOW_ADMIN_FIRSTNAME:-Admin}
+      _AIRFLOW_WWW_USER_LASTNAME: ${AIRFLOW_ADMIN_LASTNAME:-User}
+      _AIRFLOW_WWW_USER_ROLE: ${AIRFLOW_ADMIN_ROLE:-Admin}
+
+  # Optional Nginx Reverse Proxy for HTTPS
+  nginx:
+    build:
+      context: ./config/nginx
+      dockerfile: Dockerfile.nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Mount your SSL certificates here
+      # - /path/to/your/certs/live/yourdomain.com/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
+      # - /path/to/your/certs/live/yourdomain.com/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
+      - ./config/nginx/dhparam.pem:/etc/nginx/ssl/dhparam.pem:ro # Pre-generated or generate on host
+    depends_on:
+      - airflow-webserver
+    restart: unless-stopped
+    environment:
+      NGINX_BACKEND_HOST: airflow-webserver
+      NGINX_BACKEND_PORT: 8080
+      # For SSL, set these to your domain
+      # NGINX_SERVER_NAME: your.airflow.domain.com
+
+volumes:
+  postgres-db-volume:
+  redis-data-volume:
+  # logs-volume: # Defined in airflow-common, Docker will create them if not existing
+  # dags-volume:
+  # plugins-volume:
